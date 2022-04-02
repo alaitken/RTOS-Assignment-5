@@ -32,7 +32,8 @@
 #define	ROOT_DIR	1
 #define	ASSIGN_DIR	2
 #define	USERNAME_FILE	3
-#define	FILE_COUNT	3
+#define	FEATURE_FILE	4
+#define	FILE_COUNT	4
 
 
 // Hard-coded stat(2) information for each directory and file:
@@ -41,6 +42,10 @@ struct stat *file_stats;
 
 // Hard-coded content of the "assignment/username" file:
 static const char UsernameContent[] = "p15jra\n";
+
+static const char FeatureContent[] = "I have implemented the following features:\n\n- Directory Listing\n- Directory Creation and Removal\n- File Creation and Unlinking\n- File Modifications\n";
+
+// static const char FeatureContent[] = "I have implemented the following features:\n- Directory Listing\n-Directory Creation and Removal\n- File Creation and Unlinking\n- File Modifications";
 
 
 static void
@@ -73,6 +78,11 @@ example_init(void *userdata, struct fuse_conn_info *conn)
 	file_stats[USERNAME_FILE].st_mode = S_IFREG | AllRead;
 	file_stats[USERNAME_FILE].st_size = sizeof(UsernameContent);
 	file_stats[USERNAME_FILE].st_nlink = 1;
+
+	file_stats[FEATURE_FILE].st_ino = FEATURE_FILE;
+	file_stats[FEATURE_FILE].st_mode = S_IFREG | AllRead;
+	file_stats[FEATURE_FILE].st_size = sizeof(FeatureContent);
+	file_stats[FEATURE_FILE].st_nlink = 1;
 }
 
 static void
@@ -120,6 +130,12 @@ example_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		// Looking for 'username' in the 'assignment' directory
 		dirent.ino = USERNAME_FILE;
 		dirent.attr = file_stats[USERNAME_FILE];
+	}
+	else if (parent == ASSIGN_DIR && strcmp(name, "features") == 0)
+	{
+		// Looking for 'username' in the 'assignment' directory
+		dirent.ino = FEATURE_FILE;
+		dirent.attr = file_stats[FEATURE_FILE];
 	}
 	else
 	{
@@ -199,6 +215,11 @@ example_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 		                           "username",
 		                           file_stats + USERNAME_FILE,
 		                           ++next);
+        bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           "features",
+		                           file_stats + FEATURE_FILE,
+		                           ++next);
 		break;
 	}
 
@@ -234,6 +255,19 @@ example_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 
 		response_data = UsernameContent + off;
 		response_len = sizeof(UsernameContent) - off;
+		if (response_len > size) {
+			response_len = size;
+		}
+		break;
+
+	case FEATURE_FILE:
+		if (off >= sizeof(FeatureContent)) {
+			response_len = 0;
+			break;
+		}
+
+		response_data = FeatureContent + off;
+		response_len = sizeof(FeatureContent) - off;
 		if (response_len > size) {
 			response_len = size;
 		}

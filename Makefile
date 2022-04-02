@@ -15,14 +15,12 @@
 #
 
 CFLAGS=	-g -Wall `pkg-config --cflags fuse` \
-	-D USE_EXAMPLE \
 	-fsanitize=address -fno-omit-frame-pointer
 
 LDFLAGS=`pkg-config --libs fuse` -fsanitize=address
 
 OBJS=	\
 	assign4.o \
-	example.o \
 	fuse.o \
 
 all: fuse

@@ -14,10 +14,40 @@
  * limitations under the License.
  */
 
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "assign4.h"
+
+// Some hard-coded inode numbers:
+#define	ROOT_DIR	1
+#define	ASSIGN_DIR	2
+#define	USERNAME_FILE	3
+#define	FEATURE_FILE	4
+#define	FILE_COUNT	100
+
+// struct Node {
+// 	char* name;
+//     struct stat* file_stat;
+// 	struct Node* parent;
+//     struct Node* children;
+// 	int children_amount;
+// };
+
+// Hard-coded stat(2) information for each directory and file:
+struct stat *file_stats;
+
+//struct Node *root;
+
+int curr_inode_num = 0;
+
+// Hard-coded content of the "assignment/username" file:
+static const char UsernameContent[] = "p15jra\n";
+
+static const char FeatureContent[] = "I have implemented the following features:\n- Directory Listing\n-Directory Creation and Removal\n- File Creation and Unlinking\n- File Modifications";
 
 static void
 assign4_init(void *userdata, struct fuse_conn_info *conn)
@@ -29,7 +59,58 @@ assign4_init(void *userdata, struct fuse_conn_info *conn)
 	 * This function should do some setup (e.g., open the backing file or
 	 * mmap(2) some memory) and prepare any metadata that you need.
 	 */
+
+	file_stats = calloc(FILE_COUNT + 1, sizeof(*file_stats));
+
+	static const int AllRead = S_IRUSR | S_IRGRP | S_IROTH;
+	static const int AllExec = S_IXUSR | S_IXGRP | S_IXOTH;
+
+	file_stats[ROOT_DIR].st_ino = ROOT_DIR;
+	file_stats[ROOT_DIR].st_mode = S_IFDIR | AllRead | AllExec;
+	file_stats[ROOT_DIR].st_nlink = 1;
+
+	file_stats[ASSIGN_DIR].st_ino = ASSIGN_DIR;
+	file_stats[ASSIGN_DIR].st_mode = S_IFDIR | AllRead | AllExec;
+	file_stats[ASSIGN_DIR].st_nlink = 1;
+
+	file_stats[USERNAME_FILE].st_ino = USERNAME_FILE;
+	file_stats[USERNAME_FILE].st_mode = S_IFREG | AllRead;
+	file_stats[USERNAME_FILE].st_size = sizeof(UsernameContent);
+	file_stats[USERNAME_FILE].st_nlink = 1;
+
+	file_stats[FEATURE_FILE].st_ino = FEATURE_FILE;
+	file_stats[FEATURE_FILE].st_mode = S_IFREG | AllRead;
+	file_stats[FEATURE_FILE].st_size = sizeof(FeatureContent);
+	file_stats[FEATURE_FILE].st_nlink = 1;
+	
 }
+
+// static void add_directory(struct Node* parent, char* name, int mode) {
+// 	struct Node* node = malloc(sizeof(struct Node*));
+// 	struct stat *file_stat = malloc(sizeof(struct stat*));
+
+// 	file_stat->st_mode = mode;
+// 	file_stat->st_nlink = 1;
+// 	file_stat->st_ino = curr_inode_num;
+
+// 	curr_inode_num++;
+
+// 	node->parent = parent;
+// 	node->name = name;
+// 	node->file_stat = file_stat;
+
+// 	// Add directory node to current directory
+// 	parent->children[parent->children_amount];
+// 	parent->children_amount++;
+// }
+
+// static void add_file(struct Node* parent, char* name, int mode) {
+
+// }
+
+// static void remove_directory() {
+
+// }
 
 static void
 assign4_destroy(void *userdata)
@@ -40,6 +121,9 @@ assign4_destroy(void *userdata)
 	/*
 	 * Finalize any metadata, close any open files, etc.
 	 */
+
+	free(file_stats);
+	file_stats = NULL;
 }
 
 
@@ -71,7 +155,16 @@ static void
 assign4_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fip)
 {
 	fprintf(stderr, "%s ino=%zu\n", __func__, ino);
-	fuse_reply_err(req, ENOSYS);
+
+	if (ino > FILE_COUNT) {
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	int result = fuse_reply_attr(req, file_stats + ino, 1);
+	if (result != 0) {
+		fprintf(stderr, "Failed to send attr reply\n");
+	}
 }
 
 /* https://github.com/libfuse/libfuse/blob/fuse_2_9_bugfix/include/fuse_lowlevel.h#L205 */
@@ -80,7 +173,45 @@ assign4_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	fprintf(stderr, "%s parent=%zu name='%s'\n", __func__,
 	        parent, name);
-	fuse_reply_err(req, ENOSYS);
+	struct fuse_entry_param dirent;
+
+	if (parent == ROOT_DIR && strcmp(name, "assignment") == 0)
+	{
+		// Looking for 'assignment' in the root directory
+		dirent.ino = ASSIGN_DIR;
+		dirent.attr = file_stats[ASSIGN_DIR];
+	}
+	else if (parent == ASSIGN_DIR && strcmp(name, "username") == 0)
+	{
+		// Looking for 'username' in the 'assignment' directory
+		dirent.ino = USERNAME_FILE;
+		dirent.attr = file_stats[USERNAME_FILE];
+	}
+	else if (parent == ASSIGN_DIR && strcmp(name, "features") == 0)
+	{
+		// Looking for 'features' in the 'assignment' directory
+		dirent.ino = USERNAME_FILE;
+		dirent.attr = file_stats[USERNAME_FILE];
+	}
+	else
+	{
+		// Let all other names fail
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	// I'm not re-using inodes, so I don't need to worry about real
+	// generation numbers... always use the same one.
+	dirent.generation = 1;
+
+	// Assume that these values are always valid for 1s:
+	dirent.attr_timeout = 1;
+	dirent.entry_timeout = 1;
+
+	int result = fuse_reply_entry(req, &dirent);
+	if (result != 0) {
+		fprintf(stderr, "Failed to send dirent reply\n");
+	}
 }
 
 /* https://github.com/libfuse/libfuse/blob/fuse_2_9_bugfix/include/fuse_lowlevel.h#L332 */
@@ -89,6 +220,24 @@ assign4_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
 {
 	fprintf(stderr, "%s parent=%zu name='%s' mode=%d\n", __func__,
 	        parent, name, mode);
+
+	static const int AllRead = S_IRUSR | S_IRGRP | S_IROTH;
+	static const int AllExec = S_IXUSR | S_IXGRP | S_IXOTH;
+
+	file_stats[curr_inode_num].st_ino = curr_inode_num;
+	file_stats[curr_inode_num].st_mode = S_IFDIR | AllRead | AllExec;
+	file_stats[curr_inode_num].st_nlink = 1;
+
+	struct fuse_entry_param dirent;
+
+	dirent.generation = 1;
+	dirent.attr_timeout = 1;
+	dirent.entry_timeout = 1;
+	dirent.ino = curr_inode_num;
+	dirent.attr = file_stats[curr_inode_num];
+	
+	fuse_reply_entry(req, &dirent);
+
 	fuse_reply_err(req, ENOSYS);
 }
 
@@ -99,6 +248,16 @@ assign4_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
 {
 	fprintf(stderr, "%s parent=%zu name='%s' mode=%d\n", __func__,
 	        parent, name, mode);
+
+	struct fuse_entry_param dirent;
+	dirent.generation = 1;
+	dirent.attr_timeout = 1;
+	dirent.entry_timeout = 1;
+	dirent.ino = curr_inode_num;
+	dirent.attr = file_stats[USERNAME_FILE];
+	curr_inode_num++;
+	
+	fuse_reply_entry(req, &dirent);
 	fuse_reply_err(req, ENOSYS);
 }
 
@@ -117,7 +276,69 @@ assign4_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 {
 	fprintf(stderr, "%s ino=%zu size=%zu off=%zu\n", __func__,
 	        ino, size, off);
-	fuse_reply_err(req, ENOSYS);
+
+	// In our trivial example, all directories happen to have three
+	// entries: ".", ".." and either "assignment" or "username".
+	if (off > 2) {
+		fuse_reply_buf(req, NULL, 0);
+		return;
+	}
+
+	struct stat *self = file_stats + ino;
+	if (!S_ISDIR(self->st_mode)) {
+		fuse_reply_err(req, ENOTDIR);
+		return;
+	}
+
+	// In this trivial filesystem, the parent directory is always the root
+	struct stat *parent = file_stats + ROOT_DIR;
+
+	char buffer[size];
+	off_t bytes = 0;
+	int next = 0;
+
+	if (off < 1)
+	{
+		bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           ".", self, ++next);
+	}
+
+	if (off < 2)
+	{
+		bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           "..", parent, ++next);
+	}
+
+	switch(ino)
+	{
+	case ROOT_DIR:
+		bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           "assignment",
+		                           file_stats + ASSIGN_DIR,
+		                           ++next);
+		break;
+
+	case ASSIGN_DIR:
+		bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           "username",
+		                           file_stats + USERNAME_FILE,
+		                           ++next);
+		bytes += fuse_add_direntry(req, buffer + bytes,
+		                           sizeof(buffer) - bytes,
+		                           "features",
+		                           file_stats + FEATURE_FILE,
+		                           ++next);
+		break;
+	}
+
+	int result = fuse_reply_buf(req, buffer, bytes);
+	if (result != 0) {
+		fprintf(stderr, "Failed to send readdir reply\n");
+	}
 }
 
 /* https://github.com/libfuse/libfuse/blob/fuse_2_9_bugfix/include/fuse_lowlevel.h#L472 */
@@ -127,7 +348,57 @@ assign4_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 {
 	fprintf(stderr, "%s ino=%zu size=%zu off=%zu\n", __func__,
 	        ino, size, off);
-	fuse_reply_err(req, ENOSYS);
+
+	const char *response_data = NULL;
+	size_t response_len;
+	int err = 0;
+
+	switch (ino)
+	{
+	case ROOT_DIR:
+	case ASSIGN_DIR:
+		err = EISDIR;
+		break;
+
+	case USERNAME_FILE:
+		if (off >= sizeof(UsernameContent)) {
+			response_len = 0;
+			break;
+		}
+
+		response_data = UsernameContent + off;
+		response_len = sizeof(UsernameContent) - off;
+		if (response_len > size) {
+			response_len = size;
+		}
+		break;
+	case FEATURE_FILE:
+		if (off >= sizeof(FeatureContent)) {
+			response_len = 0;
+			break;
+		}
+
+		response_data = FeatureContent + off;
+		response_len = sizeof(FeatureContent) - off;
+		if (response_len > size) {
+			response_len = size;
+		}
+		break;
+
+	default:
+		err = EBADF;
+	}
+
+	if (err != 0) {
+		fuse_reply_err(req, err);
+		return;
+	}
+
+	assert(response_data != NULL);
+	int result = fuse_reply_buf(req, response_data, response_len);
+	if (result != 0) {
+		fprintf(stderr, "Failed to send read reply\n");
+	}
 }
 
 /* https://github.com/libfuse/libfuse/blob/fuse_2_9_bugfix/include/fuse_lowlevel.h#L367 */
@@ -135,6 +406,9 @@ static void
 assign4_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	fprintf(stderr, "%s parent=%zu name='%s'\n", __func__, parent, name);
+	for (int i = 0; i < curr_inode_num; i++) {
+		
+	}
 	fuse_reply_err(req, ENOSYS);
 }
 
